@@ -10,4 +10,5 @@ TODO:
 
 - Rework spawn system to have limits per world instead of per player.
         
+        
         - Retrieve clusters of players, take their average position and create a spawning area around that point. Spread out             spawning based on the amount of players in a specific spawn area.
