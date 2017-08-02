@@ -1,5 +1,6 @@
 package hobbyist.samIam.dynamicspawn;
 
+import com.google.common.collect.Lists;
 import org.spongepowered.api.event.Listener;
 import org.spongepowered.api.event.network.ClientConnectionEvent.Join;
 import org.spongepowered.api.event.network.ClientConnectionEvent.Disconnect;
@@ -18,6 +19,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.concurrent.TimeUnit;
 import ninja.leaping.configurate.commented.CommentedConfigurationNode;
 import ninja.leaping.configurate.hocon.HoconConfigurationLoader;
 import ninja.leaping.configurate.loader.ConfigurationLoader;
@@ -25,13 +27,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.spongepowered.api.Sponge;
 import org.spongepowered.api.event.game.state.GameInitializationEvent;
+import org.spongepowered.api.scheduler.SpongeExecutorService;
+import org.spongepowered.api.world.World;
 
 
 @Plugin
 (
         id = "dynamicspawn",
         name = "DynamicSpawn",
-        version = "0.0.1",
+        version = "0.0.2",
         dependencies = @Dependency(id = "pixelmon"),
         description = "Increase the spawn limits in Pixelmon based on number of online players.",
         authors = "samIam"
@@ -54,6 +58,9 @@ public class DynamicSpawn {
     
     public Path configPath = Paths.get("config" + separator + "DynamicSpawn.cfg");
     public ConfigurationLoader<CommentedConfigurationNode> configLoader = HoconConfigurationLoader.builder().setPath(configPath).build();
+    
+    World w;
+    SpongeExecutorService scheduler;
     
     //Load files
     @Listener
@@ -87,48 +94,50 @@ public class DynamicSpawn {
         initMaxBosses = maxNumBosses;
         initMaxNPCs = maxNumNPCs;
         maxServerPlayers = Sponge.getServer().getMaxPlayers();
+        
+        w = Sponge.getServer().getWorlds().toArray(new World[0])[0];
+        
+        //Disable spawn chunks loaded
+        w.getProperties().setKeepSpawnLoaded(false);
+        
+        scheduler = Sponge.getScheduler().createSyncExecutor(this);
+        //Update spawn rates every 10 seconds.
+        scheduler.scheduleAtFixedRate(new ChangeLimits(), 0, 10, TimeUnit.SECONDS);
     }
     
     @Listener
     public void onServerStopped(GameStoppedServerEvent event)
     {
+        scheduler.shutdown();
+    }
+    
+    class ChangeLimits implements Runnable
+    {
+        @Override
+        public void run() {
+            int loaded_chunks = Lists.newArrayList(w.getLoadedChunks()).size();
+            int players = Sponge.getServer().getOnlinePlayers().size();
+            //Default view distance for each player is 10 (21*21 chunks loaded).
+            //chunkPerPlayer is low when a lot of players are at the same position.
+            double chunkPerPlayer = (double)loaded_chunks/(21*21*players);
+            double rate = (double)(1/chunkPerPlayer)-1.0; //should be zero when all players are evenly spread out.
+            maxNumLandPokemon = Math.min((int)Math.ceil((initMaxLand*minPercentage) + rate), initMaxLand);
+            log.info("Land: " + maxNumLandPokemon);
 
-    }
-    
-    @Listener
-    public void onPlayerJoin(Join event)
-    {
-       log.info("A player joined. Adjusting spawn limit.");
-       ChangeLimits();
-    }
-    
-    @Listener
-    public void onPlayerLeave(Disconnect event)
-    {
-        log.info("A player leaved. Adjusting spawn limit.");
-        ChangeLimits();
-    }
-    
-    
-    void ChangeLimits()
-    {
-        double rate = (double)Sponge.getServer().getOnlinePlayers().size()/(double)maxServerPlayers;
-        maxNumLandPokemon = Math.min((int)Math.ceil((initMaxLand*minPercentage) + (initMaxLand*rate)), initMaxLand);
-        log.info("Land: " + maxNumLandPokemon);
-        
-        maxNumWaterPokemon = Math.min((int)Math.ceil((initMaxWater*minPercentage) + (initMaxWater*rate)), initMaxWater);
-        log.info("Water: " + maxNumWaterPokemon);
-        
-        maxNumAirPokemon = Math.min((int)Math.ceil((initMaxAir*minPercentage) + (initMaxAir*rate)), initMaxAir);
-        log.info("Air: " + maxNumAirPokemon);
-        
-        maxNumUndergroundPokemon = Math.min((int)Math.ceil((initMaxUnderground*minPercentage) + (initMaxUnderground*rate)), initMaxUnderground);
-        log.info("Undergound: " + maxNumUndergroundPokemon);
-        
-        maxNumBosses = Math.min((int)Math.ceil((initMaxBosses*minPercentage) + (initMaxBosses*rate)), initMaxBosses);
-        log.info("Bosses: " + maxNumBosses);
-        
-        maxNumNPCs = Math.min((int)Math.ceil((initMaxNPCs*minPercentage) + (initMaxNPCs*rate)), initMaxNPCs);
-        log.info("NPCs: " + maxNumNPCs);
+            maxNumWaterPokemon = Math.min((int)Math.ceil((initMaxWater*minPercentage) + rate), initMaxWater);
+            log.info("Water: " + maxNumWaterPokemon);
+
+            maxNumAirPokemon = Math.min((int)Math.ceil((initMaxAir*minPercentage) + rate), initMaxAir);
+            log.info("Air: " + maxNumAirPokemon);
+
+            maxNumUndergroundPokemon = Math.min((int)Math.ceil((initMaxUnderground*minPercentage) + rate), initMaxUnderground);
+            log.info("Undergound: " + maxNumUndergroundPokemon);
+
+            maxNumBosses = Math.min((int)Math.ceil((initMaxBosses*minPercentage) + rate), initMaxBosses);
+            log.info("Bosses: " + maxNumBosses);
+
+            maxNumNPCs = Math.min((int)Math.ceil((initMaxNPCs*minPercentage) + rate), initMaxNPCs);
+            log.info("NPCs: " + maxNumNPCs);
+        }
     }
 }
