@@ -119,8 +119,8 @@ public class DynamicSpawn {
             int players = Sponge.getServer().getOnlinePlayers().size();
             //Default view distance for each player is 10 (21*21 chunks loaded).
             //chunkPerPlayer is low when a lot of players are at the same position.
-            double chunkPerPlayer = (double)loaded_chunks/(21*21*players);
-            double rate = (double)(1/chunkPerPlayer)-1.0; //should be zero when all players are evenly spread out.
+            double chunkPerPlayer = (double)loaded_chunks/(double)(21*21*players);
+            double rate = (1.0/chunkPerPlayer)-1.0; //should be zero when all players are evenly spread out.
             maxNumLandPokemon = Math.min((int)Math.ceil((initMaxLand*minPercentage) + rate), initMaxLand);
             log.info("Land: " + maxNumLandPokemon);
 
