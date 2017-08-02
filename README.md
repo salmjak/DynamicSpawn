@@ -9,6 +9,5 @@ Use the .cfg to set the minimum limit (default 0.20 (20% of max limit))
 TODO:
 
 - Rework spawn system to have limits per player instead of area.
-        
-        
-        - Retrieve clusters of players, take their average position and create a spawning area around that point. Spread out spawning based on the amount of players in a specific spawn area.
+       
+       - Cluster players with locality sensitive hashing.
