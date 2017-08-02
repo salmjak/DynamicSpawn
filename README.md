@@ -11,4 +11,4 @@ TODO:
 - Rework spawn system to have limits per player instead of area.
        
        
-       - 1) Cluster players using locality sensitive hashing. 2) Listen to Pixelmons SpawnRequestEvent and approve or disapprove it based on spawnlocation and 
+       - 1) Cluster players using locality sensitive hashing. 2) Listen to Pixelmons SpawnRequestEvent and approve or disapprove it based on spawnlocation and number of already spawned pokemon of that type.
