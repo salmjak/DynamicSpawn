@@ -11,4 +11,4 @@ TODO:
 - Rework spawn system to have limits per player instead of area.
        
        
-       - Cluster players with locality sensitive hashing.
+       - 1) Cluster players using locality sensitive hashing. 2) Override the default spawn system of Pixelmon somehow.
