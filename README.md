@@ -2,7 +2,7 @@
 
 #For Pixelmon 5.1.2 - Minecraft 1.10.2 - Sponge API 5.1.0#
 
-A simple plugin which dynamically increases the spawn limits (linearly) in Pixelmon based on number of online players (based on the initial max limit set in the pixelmon config for each category and the max number of allowed online players on the server).
+A simple plugin which dynamically increases the spawn limits of Pixelmon. The plugin will increase spawns when players are aggregated using a function based on the number of loaded chunks and online players but never go above the max limit set in pixelmon configs.
 
 Use the .cfg to set the minimum limit (default 0.20 (20% of max limit))
 
