@@ -6,9 +6,11 @@ import com.google.inject.Inject;
 import org.spongepowered.api.event.Listener;
 import org.spongepowered.api.event.game.state.GameStartedServerEvent;
 import org.spongepowered.api.event.game.state.GameStoppedServerEvent;
+import org.spongepowered.api.event.network.ClientConnectionEvent;
 import org.spongepowered.api.plugin.Dependency;
 import org.spongepowered.api.plugin.Plugin;
 import static com.pixelmonmod.pixelmon.config.PixelmonConfig.chunkSpawnRadius;
+import static com.pixelmonmod.pixelmon.config.PixelmonConfig.maxSpawnsPerTick;
 import com.pixelmonmod.pixelmon.entities.pixelmon.EntityPixelmon;
 import hobbyist.samIam.utilities.EntitiesUtility;
 import java.io.IOException;
@@ -31,7 +33,7 @@ import org.spongepowered.api.entity.living.player.Player;
 import org.spongepowered.api.event.entity.ConstructEntityEvent;
 import org.spongepowered.api.event.entity.ConstructEntityEvent.Post;
 import org.spongepowered.api.event.entity.SpawnEntityEvent;
-import org.spongepowered.api.event.entity.DestructEntityEvent;
+import org.spongepowered.api.event.entity.ExpireEntityEvent;
 import org.spongepowered.api.event.filter.type.Exclude;
 import org.spongepowered.api.scheduler.SpongeExecutorService;
 
@@ -110,6 +112,7 @@ public class DynamicSpawn {
     {
         spawnRadius = chunkSpawnRadius;
         maxOnlinePlayers = Sponge.getServer().getMaxPlayers();
+        maxSpawnsPerTick = 0;
         
         w = Sponge.getServer().getWorlds().toArray(new World[0])[0];
         
@@ -129,6 +132,20 @@ public class DynamicSpawn {
         {
             log.info("Currently " + spawnedPixelmon + " pokemon spawned.");
         }
+    }
+    
+    @Listener
+    public void onPlayerJoin(ClientConnectionEvent.Join event)
+    {
+        maxSpawnsPerTick = (Sponge.getServer().getOnlinePlayers().size()*maxPerPlayer)-spawnedPixelmon;
+        log.info("Player joined. Adjusting max spawns per tick to: " + maxSpawnsPerTick);
+    }
+    
+    @Listener
+    public void onPlayerLeave(ClientConnectionEvent.Disconnect event)
+    {
+        maxSpawnsPerTick = (Sponge.getServer().getOnlinePlayers().size()*maxPerPlayer)-spawnedPixelmon;
+        log.info("Player left. Adjusting max spawns per tick to: " + maxSpawnsPerTick);
     }
 
     
@@ -197,12 +214,13 @@ public class DynamicSpawn {
                 //spawnedPixelmon.add(p.getUniqueID());
                 spawnedPixelmon++;
                 log.info("Spawned a " + p.getName());
+                maxSpawnsPerTick = (Sponge.getServer().getOnlinePlayers().size()*maxPerPlayer)-spawnedPixelmon;
             }
         }
     }
     
     @Listener
-    public void onDespawn(DestructEntityEvent event)
+    public void onDespawn(ExpireEntityEvent event)
     {
         if(event.getTargetEntity() instanceof EntityPixelmon)
         {
