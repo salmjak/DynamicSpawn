@@ -1,143 +1,219 @@
 package hobbyist.samIam.dynamicspawn;
 
+import com.flowpowered.math.vector.Vector3d;
 import com.google.common.collect.Lists;
+import com.google.inject.Inject;
 import org.spongepowered.api.event.Listener;
-import org.spongepowered.api.event.network.ClientConnectionEvent.Join;
-import org.spongepowered.api.event.network.ClientConnectionEvent.Disconnect;
 import org.spongepowered.api.event.game.state.GameStartedServerEvent;
 import org.spongepowered.api.event.game.state.GameStoppedServerEvent;
 import org.spongepowered.api.plugin.Dependency;
 import org.spongepowered.api.plugin.Plugin;
-import static com.pixelmonmod.pixelmon.config.PixelmonConfig.maxNumLandPokemon;
-import static com.pixelmonmod.pixelmon.config.PixelmonConfig.maxNumWaterPokemon;
-import static com.pixelmonmod.pixelmon.config.PixelmonConfig.maxNumAirPokemon;
-import static com.pixelmonmod.pixelmon.config.PixelmonConfig.maxNumUndergroundPokemon;
-import static com.pixelmonmod.pixelmon.config.PixelmonConfig.maxNumBosses;
-import static com.pixelmonmod.pixelmon.config.PixelmonConfig.maxNumNPCs;
-import static java.io.File.separator;
+import static com.pixelmonmod.pixelmon.config.PixelmonConfig.chunkSpawnRadius;
+import com.pixelmonmod.pixelmon.entities.pixelmon.EntityPixelmon;
+import hobbyist.samIam.utilities.EntitiesUtility;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.concurrent.TimeUnit;
 import ninja.leaping.configurate.commented.CommentedConfigurationNode;
 import ninja.leaping.configurate.hocon.HoconConfigurationLoader;
 import ninja.leaping.configurate.loader.ConfigurationLoader;
 import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.spongepowered.api.Sponge;
 import org.spongepowered.api.event.game.state.GameInitializationEvent;
-import org.spongepowered.api.scheduler.SpongeExecutorService;
 import org.spongepowered.api.world.World;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import org.spongepowered.api.config.DefaultConfig;
+import org.spongepowered.api.entity.Entity;
+import org.spongepowered.api.entity.living.player.Player;
+import org.spongepowered.api.event.entity.ConstructEntityEvent;
+import org.spongepowered.api.event.entity.ConstructEntityEvent.Post;
+import org.spongepowered.api.event.entity.SpawnEntityEvent;
+import org.spongepowered.api.event.entity.DestructEntityEvent;
+import org.spongepowered.api.event.filter.type.Exclude;
+import org.spongepowered.api.scheduler.SpongeExecutorService;
 
 
 @Plugin
 (
         id = "dynamicspawn",
         name = "DynamicSpawn",
-        version = "0.0.2",
+        version = "0.0.3",
         dependencies = @Dependency(id = "pixelmon"),
-        description = "Increase the spawn limits in Pixelmon based on number of online players.",
+        description = "Limits the spawn of Pokemon dynamically.",
         authors = "samIam"
         
 )
 public class DynamicSpawn {
     
     // Setup Logger
-    private static final String name = "DynamicSpawn";
-    public static final Logger log = LoggerFactory.getLogger(name);
+    @Inject
+    public Logger log;
     
-    public int initMaxLand = 0;
-    public int initMaxAir = 0;
-    public int initMaxWater = 0;
-    public int initMaxUnderground = 0;
-    public int initMaxBosses = 0;
-    public int initMaxNPCs = 0;
-    public double minPercentage = 0.20;
-    public int maxServerPlayers = 0;
+    public static DynamicSpawn instance;
     
-    public Path configPath = Paths.get("config" + separator + "DynamicSpawn.cfg");
-    public ConfigurationLoader<CommentedConfigurationNode> configLoader = HoconConfigurationLoader.builder().setPath(configPath).build();
+    public static Logger getLogger()
+    {
+        return instance.log;
+    }
     
-    World w;
-    SpongeExecutorService scheduler;
+    public int maxOnServer = 200;
+    public int maxPerArea = 60;
+    public int maxPerPlayer = 20;
+    public int spawnRadius = 8;
+    public int maxOnlinePlayers = 20;
+    
+    @Inject
+    @DefaultConfig(sharedRoot = true)
+    public Path configPath;
+    
+    public ConfigurationLoader<CommentedConfigurationNode> configLoader;
+    
+    public World w;
+    SpongeExecutorService schedule;
+    
+    public int spawnedPixelmon = 0;
     
     //Load files
     @Listener
     public void onInitialization(GameInitializationEvent event){
+        instance = this;
+        
         //Load configs
+        configLoader = HoconConfigurationLoader.builder().setPath(configPath).build();
         CommentedConfigurationNode rootNode;
         try
         {
             if(!Files.exists(configPath)){
                 rootNode = configLoader.load();
-                rootNode.getNode("Minimum Limit", "Percentage").setValue(0.20).setComment("The minimum amount as a percentage of the max limit for each category.");
+                rootNode.getNode("Limits", "OnServer").setValue(200);
+                rootNode.getNode("Limits", "PerArea").setValue(60);
+                rootNode.getNode("Limits", "PerPlayer").setValue(20);
                 configLoader.save(rootNode);
             }
             else
             {
                 rootNode = configLoader.load();
-                minPercentage = rootNode.getNode("Minimum Amount", "Percentage").getDouble();
+                maxOnServer = rootNode.getNode("Limits", "OnServer").getInt(200);
+                maxPerArea = rootNode.getNode("Limits", "PerArea").getInt(60);
+                maxPerPlayer = rootNode.getNode("Limits", "PerPlayer").getInt(20);
             } 
         } catch(IOException e) {
-            log.error("Failed to create config" + e.getMessage());
+            log.error("Failed to create/load or save config" + e.getMessage());
         }
     }
     
     @Listener
     public void onServerStart(GameStartedServerEvent event) 
     {
-        initMaxLand = maxNumLandPokemon;
-        initMaxAir = maxNumAirPokemon;
-        initMaxWater = maxNumWaterPokemon;
-        initMaxUnderground = maxNumUndergroundPokemon;
-        initMaxBosses = maxNumBosses;
-        initMaxNPCs = maxNumNPCs;
-        maxServerPlayers = Sponge.getServer().getMaxPlayers();
+        spawnRadius = chunkSpawnRadius;
+        maxOnlinePlayers = Sponge.getServer().getMaxPlayers();
         
         w = Sponge.getServer().getWorlds().toArray(new World[0])[0];
         
         //Disable spawn chunks loaded
         w.getProperties().setKeepSpawnLoaded(false);
+        schedule = Sponge.getScheduler().createSyncExecutor(this);
+        schedule.scheduleAtFixedRate(new LogStatus(), 30, 30, TimeUnit.SECONDS);
         
-        scheduler = Sponge.getScheduler().createSyncExecutor(this);
-        //Update spawn rates every 10 seconds.
-        scheduler.scheduleAtFixedRate(new ChangeLimits(), 0, 10, TimeUnit.SECONDS);
+        
+    }
+    
+    class LogStatus implements Runnable
+    {
+
+        @Override
+        public void run() 
+        {
+            log.info("Currently " + spawnedPixelmon + " pokemon spawned.");
+        }
+    }
+
+    
+    @Listener
+    @Exclude(SpawnEntityEvent.Spawner.class)
+    public void onSpawn(SpawnEntityEvent event)
+    {
+        for(Entity e : event.getEntities())
+        {
+            if(!(e instanceof EntityPixelmon))
+            {
+                continue;
+            }
+
+            if(spawnedPixelmon >= maxOnServer)
+            {
+                e.remove();
+                continue;
+            }
+            //Distance between a player and possible spawn will be the radius * chunkSize.
+            ArrayList<Player> nearbyPlayers = EntitiesUtility.getNearbyPlayers(e, spawnRadius);
+            if(nearbyPlayers.isEmpty())
+            {
+                EntityPixelmon poke = (EntityPixelmon)e;
+                e.remove();
+                continue;
+            }
+
+            Vector3d avg_pos = new Vector3d(0,0,0);
+            Vector3d minPos = nearbyPlayers.get(0).getTransform().getPosition();
+            Vector3d maxPos = nearbyPlayers.get(0).getTransform().getPosition();
+
+            for(Player p : nearbyPlayers)
+            {
+                avg_pos = avg_pos.add(p.getTransform().getPosition());
+                if(p.getTransform().getPosition().getX() < minPos.getX() || p.getTransform().getPosition().getZ() > minPos.getZ())
+                {
+                    //New pos is more south-west
+                    minPos = p.getTransform().getPosition();
+                } 
+                else if(p.getTransform().getPosition().getX() > maxPos.getX() || p.getTransform().getPosition().getZ() < maxPos.getZ())
+                {
+                    //New pos is more north-east
+                    maxPos = p.getTransform().getPosition();
+                }
+            }
+
+            //Divide by 16 to get number of chunks between the player furthest to south-west and player furthest to north-east
+            double addToViewDistance = EntitiesUtility.getEuclidianDistance(minPos, maxPos)/16.0;
+            avg_pos = avg_pos.div((double)nearbyPlayers.size());
+
+            //10 is the default server view distance
+            int pokemonInAreaAroundPlayers = EntitiesUtility.getNumberOfPokemonWithinViewDistanceOfPos(avg_pos, 10.0 + addToViewDistance);
+            
+            EntityPixelmon p = (EntityPixelmon)e;
+            if(pokemonInAreaAroundPlayers >= maxPerArea)
+            {
+                e.remove();
+            } 
+            else if(pokemonInAreaAroundPlayers >= maxPerPlayer*nearbyPlayers.size())
+            {
+                e.remove();
+            } 
+            else 
+            {
+                //spawnedPixelmon.add(p.getUniqueID());
+                spawnedPixelmon++;
+                log.info("Spawned a " + p.getName());
+            }
+        }
+    }
+    
+    @Listener
+    public void onDespawn(DestructEntityEvent event)
+    {
+        if(event.getTargetEntity() instanceof EntityPixelmon)
+        {
+            spawnedPixelmon--;
+        }
     }
     
     @Listener
     public void onServerStopped(GameStoppedServerEvent event)
     {
-        scheduler.shutdown();
+        
     }
     
-    class ChangeLimits implements Runnable
-    {
-        @Override
-        public void run() {
-            int loaded_chunks = Lists.newArrayList(w.getLoadedChunks()).size();
-            int players = Sponge.getServer().getOnlinePlayers().size();
-            //Default view distance for each player is 10 (21*21 chunks loaded).
-            //chunkPerPlayer is low when a lot of players are at the same position.
-            double chunkPerPlayer = (double)loaded_chunks/(double)(21*21*players);
-            double rate = (1.0/chunkPerPlayer)-1.0; //should be zero when all players are evenly spread out.
-            maxNumLandPokemon = Math.min((int)Math.ceil((initMaxLand*minPercentage) + rate), initMaxLand);
-            log.info("Land: " + maxNumLandPokemon);
-
-            maxNumWaterPokemon = Math.min((int)Math.ceil((initMaxWater*minPercentage) + rate), initMaxWater);
-            log.info("Water: " + maxNumWaterPokemon);
-
-            maxNumAirPokemon = Math.min((int)Math.ceil((initMaxAir*minPercentage) + rate), initMaxAir);
-            log.info("Air: " + maxNumAirPokemon);
-
-            maxNumUndergroundPokemon = Math.min((int)Math.ceil((initMaxUnderground*minPercentage) + rate), initMaxUnderground);
-            log.info("Undergound: " + maxNumUndergroundPokemon);
-
-            maxNumBosses = Math.min((int)Math.ceil((initMaxBosses*minPercentage) + rate), initMaxBosses);
-            log.info("Bosses: " + maxNumBosses);
-
-            maxNumNPCs = Math.min((int)Math.ceil((initMaxNPCs*minPercentage) + rate), initMaxNPCs);
-            log.info("NPCs: " + maxNumNPCs);
-        }
-    }
 }
