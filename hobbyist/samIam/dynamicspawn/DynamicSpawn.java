@@ -11,6 +11,7 @@ import org.spongepowered.api.plugin.Dependency;
 import org.spongepowered.api.plugin.Plugin;
 import static com.pixelmonmod.pixelmon.config.PixelmonConfig.chunkSpawnRadius;
 import static com.pixelmonmod.pixelmon.config.PixelmonConfig.maxSpawnsPerTick;
+import com.pixelmonmod.pixelmon.database.SpawnLocation;
 import com.pixelmonmod.pixelmon.entities.pixelmon.EntityPixelmon;
 import hobbyist.samIam.utilities.EntitiesUtility;
 import java.io.IOException;
@@ -25,17 +26,16 @@ import org.spongepowered.api.event.game.state.GameInitializationEvent;
 import org.spongepowered.api.world.World;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import org.spongepowered.api.config.DefaultConfig;
 import org.spongepowered.api.entity.Entity;
 import org.spongepowered.api.entity.living.player.Player;
-import org.spongepowered.api.event.entity.ConstructEntityEvent;
-import org.spongepowered.api.event.entity.ConstructEntityEvent.Post;
 import org.spongepowered.api.event.entity.SpawnEntityEvent;
-import org.spongepowered.api.event.entity.ExpireEntityEvent;
 import org.spongepowered.api.event.filter.type.Exclude;
 import org.spongepowered.api.scheduler.SpongeExecutorService;
+import org.spongepowered.api.util.Tuple;
 
 
 @Plugin
@@ -66,6 +66,8 @@ public class DynamicSpawn {
     public int maxPerPlayer = 20;
     public int spawnRadius = 8;
     public int maxOnlinePlayers = 20;
+    public double maxFlyingPercentage = 0.10;
+    public double maxWaterPercentage = 0.30;
     
     @Inject
     @DefaultConfig(sharedRoot = true)
@@ -74,9 +76,10 @@ public class DynamicSpawn {
     public ConfigurationLoader<CommentedConfigurationNode> configLoader;
     
     public World w;
-    SpongeExecutorService schedule;
+    SpongeExecutorService scheduleLog;
+    SpongeExecutorService scheduleCleanUp;
     
-    public int spawnedPixelmon = 0;
+    public  HashSet<UUID> spawnedPixelmon = new HashSet<>();
     
     //Load files
     @Listener
@@ -93,6 +96,8 @@ public class DynamicSpawn {
                 rootNode.getNode("Limits", "OnServer").setValue(200);
                 rootNode.getNode("Limits", "PerArea").setValue(60);
                 rootNode.getNode("Limits", "PerPlayer").setValue(20);
+                rootNode.getNode("Limits", "maxFlyingPercentage").setValue(0.10);
+                rootNode.getNode("Limits", "maxWaterPercentage").setValue(0.30);
                 configLoader.save(rootNode);
             }
             else
@@ -101,10 +106,14 @@ public class DynamicSpawn {
                 maxOnServer = rootNode.getNode("Limits", "OnServer").getInt(200);
                 maxPerArea = rootNode.getNode("Limits", "PerArea").getInt(60);
                 maxPerPlayer = rootNode.getNode("Limits", "PerPlayer").getInt(20);
+                maxFlyingPercentage =  rootNode.getNode("Limits", "maxFlyingPercentage").getDouble(0.10);
+                maxWaterPercentage = rootNode.getNode("Limits", "maxWaterPercentage").getDouble(0.30);
+                
             } 
         } catch(IOException e) {
             log.error("Failed to create/load or save config" + e.getMessage());
         }
+        
     }
     
     @Listener
@@ -118,10 +127,11 @@ public class DynamicSpawn {
         
         //Disable spawn chunks loaded
         w.getProperties().setKeepSpawnLoaded(false);
-        schedule = Sponge.getScheduler().createSyncExecutor(this);
-        schedule.scheduleAtFixedRate(new LogStatus(), 30, 30, TimeUnit.SECONDS);
+        scheduleLog = Sponge.getScheduler().createSyncExecutor(this);
+        scheduleLog.scheduleAtFixedRate(new LogStatus(), 60, 60, TimeUnit.SECONDS);
         
-        
+        scheduleCleanUp = Sponge.getScheduler().createSyncExecutor(this);
+        scheduleCleanUp.scheduleAtFixedRate(new EntitiesAlive(), 1, 1, TimeUnit.SECONDS);
     }
     
     class LogStatus implements Runnable
@@ -130,21 +140,63 @@ public class DynamicSpawn {
         @Override
         public void run() 
         {
-            log.info("Currently " + spawnedPixelmon + " pokemon spawned.");
+            log.info("Currently " + spawnedPixelmon.size() + " pokemon spawned. Spawn Per Tick: " + maxSpawnsPerTick);
         }
+    }
+    
+    class EntitiesAlive implements Runnable
+    {
+        int k = 0;
+        @Override
+        public void run() 
+        {
+            ArrayList<UUID> tempList = Lists.newArrayList(spawnedPixelmon);
+            
+            //Divide work by doing looking at 50 entities at a time.
+            int iterations = (int)Math.ceil((double)maxOnServer / 50.0);
+            int p = (iterations-k)*50;
+            
+            for(int i=p; i < tempList.size(); i++)
+            {
+                if(i >= tempList.size())
+                {
+                    break;
+                }
+                Optional<Entity> o = w.getEntity(tempList.get(i));
+                if(o.isPresent())
+                {
+                    if(o.get().isRemoved())
+                    {
+                        spawnedPixelmon.remove(tempList.get(i));
+                    }
+                } 
+                else 
+                {
+                    spawnedPixelmon.remove(tempList.get(i));
+                }
+            }
+            
+            AdjustSpawnRate();
+            k++;
+            if(k > iterations)
+            {
+                k=0;
+            }
+        }
+        
     }
     
     @Listener
     public void onPlayerJoin(ClientConnectionEvent.Join event)
     {
-        maxSpawnsPerTick = (Sponge.getServer().getOnlinePlayers().size()*maxPerPlayer)-spawnedPixelmon;
+        AdjustSpawnRate();
         log.info("Player joined. Adjusting max spawns per tick to: " + maxSpawnsPerTick);
     }
     
     @Listener
     public void onPlayerLeave(ClientConnectionEvent.Disconnect event)
     {
-        maxSpawnsPerTick = (Sponge.getServer().getOnlinePlayers().size()*maxPerPlayer)-spawnedPixelmon;
+        AdjustSpawnRate();
         log.info("Player left. Adjusting max spawns per tick to: " + maxSpawnsPerTick);
     }
 
@@ -159,18 +211,25 @@ public class DynamicSpawn {
             {
                 continue;
             }
-
-            if(spawnedPixelmon >= maxOnServer)
+            
+            EntityPixelmon poke = (EntityPixelmon)e;
+            
+            if(poke.getOwner() != null)
             {
-                e.remove();
+                continue;
+            }
+
+            if(spawnedPixelmon.size() >= maxOnServer)
+            {
+                //e.remove();
+                poke.setDead();
                 continue;
             }
             //Distance between a player and possible spawn will be the radius * chunkSize.
             ArrayList<Player> nearbyPlayers = EntitiesUtility.getNearbyPlayers(e, spawnRadius);
             if(nearbyPlayers.isEmpty())
             {
-                EntityPixelmon poke = (EntityPixelmon)e;
-                e.remove();
+                poke.setDead();
                 continue;
             }
 
@@ -198,33 +257,38 @@ public class DynamicSpawn {
             avg_pos = avg_pos.div((double)nearbyPlayers.size());
 
             //10 is the default server view distance
-            int pokemonInAreaAroundPlayers = EntitiesUtility.getNumberOfPokemonWithinViewDistanceOfPos(avg_pos, 10.0 + addToViewDistance);
+            Tuple t = EntitiesUtility.getNumberOfWildPokemonWithinViewDistanceOfPos(avg_pos, 10.0 + addToViewDistance);
+            int wildInAreaAroundPlayers = (int) t.getFirst();
+            int flyingInAreaAroundPlayers = (int)((Tuple)t.getSecond()).getFirst();
+            int waterInAreaAroundPlayers = (int)((Tuple)t.getSecond()).getSecond();
             
-            EntityPixelmon p = (EntityPixelmon)e;
-            if(pokemonInAreaAroundPlayers >= maxPerArea)
+            if(poke.getSpawnLocation() == SpawnLocation.AirPersistent)
             {
-                e.remove();
+                if(flyingInAreaAroundPlayers >= maxPerPlayer*nearbyPlayers.size()*maxFlyingPercentage){
+                    poke.setDead();
+                    continue;
+                }
             } 
-            else if(pokemonInAreaAroundPlayers >= maxPerPlayer*nearbyPlayers.size())
+            else if(poke.getSpawnLocation() == SpawnLocation.Water)
             {
-                e.remove();
-            } 
-            else 
-            {
-                //spawnedPixelmon.add(p.getUniqueID());
-                spawnedPixelmon++;
-                log.info("Spawned a " + p.getName());
-                maxSpawnsPerTick = (Sponge.getServer().getOnlinePlayers().size()*maxPerPlayer)-spawnedPixelmon;
+                if(waterInAreaAroundPlayers >= maxPerPlayer*nearbyPlayers.size()*maxWaterPercentage){
+                    poke.setDead();
+                    continue;
+                }
             }
-        }
-    }
-    
-    @Listener
-    public void onDespawn(ExpireEntityEvent event)
-    {
-        if(event.getTargetEntity() instanceof EntityPixelmon)
-        {
-            spawnedPixelmon--;
+            
+            if(wildInAreaAroundPlayers >= maxPerArea)
+            {
+                poke.setDead();
+            } 
+            else if(wildInAreaAroundPlayers >= maxPerPlayer*nearbyPlayers.size())
+            {
+                poke.setDead();
+            } 
+            else
+            {
+                spawnedPixelmon(poke);
+            }
         }
     }
     
@@ -232,6 +296,16 @@ public class DynamicSpawn {
     public void onServerStopped(GameStoppedServerEvent event)
     {
         
+    }
+    
+    void spawnedPixelmon(EntityPixelmon p){
+        spawnedPixelmon.add(((Entity) p).getUniqueId());
+        AdjustSpawnRate();
+    }
+    
+    void AdjustSpawnRate()
+    {
+        maxSpawnsPerTick = (int)Math.max(0, ((Sponge.getServer().getOnlinePlayers().size()*maxPerPlayer)-spawnedPixelmon.size()));
     }
     
 }
