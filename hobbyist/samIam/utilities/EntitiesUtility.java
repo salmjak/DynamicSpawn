@@ -68,7 +68,7 @@ public class EntitiesUtility {
         return t;
     }
     
-    public static ArrayList<Player> getNearbyPlayers(Entity e, double withinChunks)
+    public static ArrayList<Player> getNearbyPlayers(Vector3d pos, double withinChunks)
     {
         ArrayList<Player> players = new ArrayList<>();
         
@@ -76,7 +76,7 @@ public class EntitiesUtility {
 
         for(Player p : allPlayers)
         {
-            if(getEuclidianDistance(e.getTransform().getPosition(), p.getTransform().getPosition()) <= withinChunks*16.0)
+            if(getEuclidianDistance(pos, p.getTransform().getPosition()) <= withinChunks*16.0)
             {
                 players.add(p);
             }

@@ -29,11 +29,12 @@ import java.util.HashSet;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.event.entity.EntityJoinWorldEvent;
+import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import org.spongepowered.api.config.DefaultConfig;
 import org.spongepowered.api.entity.Entity;
 import org.spongepowered.api.entity.living.player.Player;
-import org.spongepowered.api.event.entity.SpawnEntityEvent;
-import org.spongepowered.api.event.filter.type.Exclude;
 import org.spongepowered.api.scheduler.SpongeExecutorService;
 import org.spongepowered.api.util.Tuple;
 
@@ -42,7 +43,7 @@ import org.spongepowered.api.util.Tuple;
 (
         id = "dynamicspawn",
         name = "DynamicSpawn",
-        version = "0.0.3",
+        version = "0.0.4",
         dependencies = @Dependency(id = "pixelmon"),
         description = "Limits the spawn of Pokemon dynamically.",
         authors = "samIam"
@@ -68,6 +69,8 @@ public class DynamicSpawn {
     public int maxOnlinePlayers = 20;
     public double maxFlyingPercentage = 0.10;
     public double maxWaterPercentage = 0.30;
+    public boolean alwaysLegendaries = true;
+    public boolean alwaysBosses = true;
     
     @Inject
     @DefaultConfig(sharedRoot = true)
@@ -98,6 +101,8 @@ public class DynamicSpawn {
                 rootNode.getNode("Limits", "PerPlayer").setValue(20);
                 rootNode.getNode("Limits", "maxFlyingPercentage").setValue(0.10);
                 rootNode.getNode("Limits", "maxWaterPercentage").setValue(0.30);
+                rootNode.getNode("Limits", "alwaysAllowLegendaries").setValue(true);
+                rootNode.getNode("Limits", "alwaysAllowBosses").setValue(true);
                 configLoader.save(rootNode);
             }
             else
@@ -108,12 +113,15 @@ public class DynamicSpawn {
                 maxPerPlayer = rootNode.getNode("Limits", "PerPlayer").getInt(20);
                 maxFlyingPercentage =  rootNode.getNode("Limits", "maxFlyingPercentage").getDouble(0.10);
                 maxWaterPercentage = rootNode.getNode("Limits", "maxWaterPercentage").getDouble(0.30);
+                alwaysLegendaries = rootNode.getNode("Limits", "alwaysAllowLegendaries").getBoolean(true);
+                alwaysBosses = rootNode.getNode("Limits", "alwaysAllowBosses").getBoolean(true);
                 
             } 
         } catch(IOException e) {
             log.error("Failed to create/load or save config" + e.getMessage());
         }
         
+        MinecraftForge.EVENT_BUS.register(this);
     }
     
     @Listener
@@ -131,7 +139,7 @@ public class DynamicSpawn {
         scheduleLog.scheduleAtFixedRate(new LogStatus(), 60, 60, TimeUnit.SECONDS);
         
         scheduleCleanUp = Sponge.getScheduler().createSyncExecutor(this);
-        scheduleCleanUp.scheduleAtFixedRate(new EntitiesAlive(), 1, 1, TimeUnit.SECONDS);
+        scheduleCleanUp.scheduleAtFixedRate(new EntitiesAlive(), 500, 500, TimeUnit.MILLISECONDS);
     }
     
     class LogStatus implements Runnable
@@ -141,6 +149,18 @@ public class DynamicSpawn {
         public void run() 
         {
             log.info("Currently " + spawnedPixelmon.size() + " pokemon spawned. Spawn Per Tick: " + maxSpawnsPerTick);
+            
+            ArrayList<Player> players = Lists.newArrayList(Sponge.getServer().getOnlinePlayers());
+            
+            if(!players.isEmpty())
+            {
+                Player p = players.get(0);
+                Tuple t = EntitiesUtility.getNumberOfWildPokemonWithinViewDistanceOfPos(p.getTransform().getPosition(), 10.0);
+                int wild = (int) t.getFirst();
+                int flying = (int)((Tuple)t.getSecond()).getFirst();
+                int water = (int)((Tuple)t.getSecond()).getSecond();
+                log.info("Found: " + wild + " wild pokemon, " + flying + " air persistent pokemon and " + water + " water pokemon around player " + p.getName());
+            }
         }
     }
     
@@ -152,9 +172,9 @@ public class DynamicSpawn {
         {
             ArrayList<UUID> tempList = Lists.newArrayList(spawnedPixelmon);
             
-            //Divide work by doing looking at 50 entities at a time.
-            int iterations = (int)Math.ceil((double)maxOnServer / 50.0);
-            int p = (iterations-k)*50;
+            //Divide work by only looking at 25 entities at a time.
+            int iterations = (int)Math.ceil((double)maxOnServer / 25.0);
+            int p = (iterations-k)*25;
             
             for(int i=p; i < tempList.size(); i++)
             {
@@ -199,96 +219,107 @@ public class DynamicSpawn {
         AdjustSpawnRate();
         log.info("Player left. Adjusting max spawns per tick to: " + maxSpawnsPerTick);
     }
-
     
-    @Listener
-    @Exclude(SpawnEntityEvent.Spawner.class)
-    public void onSpawn(SpawnEntityEvent event)
+    @SubscribeEvent
+    public void onJoinWorld(EntityJoinWorldEvent event)
     {
-        for(Entity e : event.getEntities())
+        Entity e = (Entity) event.getEntity();
+        if(!(e instanceof EntityPixelmon))
         {
-            if(!(e instanceof EntityPixelmon))
-            {
-                continue;
-            }
-            
-            EntityPixelmon poke = (EntityPixelmon)e;
-            
-            if(poke.getOwner() != null)
-            {
-                continue;
-            }
+            return;
+        }
 
-            if(spawnedPixelmon.size() >= maxOnServer)
+        EntityPixelmon poke = (EntityPixelmon)e;
+
+        if(poke.getOwner() != null)
+        {
+            return;
+        }
+
+        if(alwaysLegendaries)
+        {
+            if(poke.getSpawnLocation() == SpawnLocation.Legendary)
             {
-                //e.remove();
-                poke.setDead();
-                continue;
+                return;
             }
-            //Distance between a player and possible spawn will be the radius * chunkSize.
-            ArrayList<Player> nearbyPlayers = EntitiesUtility.getNearbyPlayers(e, spawnRadius);
-            if(nearbyPlayers.isEmpty())
+        }
+
+        if(alwaysBosses)
+        {
+            if(poke.getSpawnLocation() == SpawnLocation.Boss)
             {
-                poke.setDead();
-                continue;
+                return;
             }
+        }
 
-            Vector3d avg_pos = new Vector3d(0,0,0);
-            Vector3d minPos = nearbyPlayers.get(0).getTransform().getPosition();
-            Vector3d maxPos = nearbyPlayers.get(0).getTransform().getPosition();
+        if(spawnedPixelmon.size() >= maxOnServer)
+        {
+            event.setCanceled(true);
+            return;
+        }
+        //Distance between a player and possible spawn will be the radius * chunkSize.
+        ArrayList<Player> nearbyPlayers = EntitiesUtility.getNearbyPlayers(e.getTransform().getPosition(), spawnRadius);
+        if(nearbyPlayers.isEmpty())
+        {
+            event.setCanceled(true);
+            return;
+        }
 
-            for(Player p : nearbyPlayers)
+        Vector3d avg_pos = new Vector3d(0,0,0);
+        Vector3d minPos = nearbyPlayers.get(0).getTransform().getPosition();
+        Vector3d maxPos = nearbyPlayers.get(0).getTransform().getPosition();
+
+        for(Player p : nearbyPlayers)
+        {
+            avg_pos = avg_pos.add(p.getTransform().getPosition());
+            if(p.getTransform().getPosition().getX() < minPos.getX() || p.getTransform().getPosition().getZ() > minPos.getZ())
             {
-                avg_pos = avg_pos.add(p.getTransform().getPosition());
-                if(p.getTransform().getPosition().getX() < minPos.getX() || p.getTransform().getPosition().getZ() > minPos.getZ())
-                {
-                    //New pos is more south-west
-                    minPos = p.getTransform().getPosition();
-                } 
-                else if(p.getTransform().getPosition().getX() > maxPos.getX() || p.getTransform().getPosition().getZ() < maxPos.getZ())
-                {
-                    //New pos is more north-east
-                    maxPos = p.getTransform().getPosition();
-                }
-            }
-
-            //Divide by 16 to get number of chunks between the player furthest to south-west and player furthest to north-east
-            double addToViewDistance = EntitiesUtility.getEuclidianDistance(minPos, maxPos)/16.0;
-            avg_pos = avg_pos.div((double)nearbyPlayers.size());
-
-            //10 is the default server view distance
-            Tuple t = EntitiesUtility.getNumberOfWildPokemonWithinViewDistanceOfPos(avg_pos, 10.0 + addToViewDistance);
-            int wildInAreaAroundPlayers = (int) t.getFirst();
-            int flyingInAreaAroundPlayers = (int)((Tuple)t.getSecond()).getFirst();
-            int waterInAreaAroundPlayers = (int)((Tuple)t.getSecond()).getSecond();
-            
-            if(poke.getSpawnLocation() == SpawnLocation.AirPersistent)
-            {
-                if(flyingInAreaAroundPlayers >= maxPerPlayer*nearbyPlayers.size()*maxFlyingPercentage){
-                    poke.setDead();
-                    continue;
-                }
+                //New pos is more south-west
+                minPos = p.getTransform().getPosition();
             } 
-            else if(poke.getSpawnLocation() == SpawnLocation.Water)
+            else if(p.getTransform().getPosition().getX() > maxPos.getX() || p.getTransform().getPosition().getZ() < maxPos.getZ())
             {
-                if(waterInAreaAroundPlayers >= maxPerPlayer*nearbyPlayers.size()*maxWaterPercentage){
-                    poke.setDead();
-                    continue;
-                }
+                //New pos is more north-east
+                maxPos = p.getTransform().getPosition();
             }
-            
-            if(wildInAreaAroundPlayers >= maxPerArea)
-            {
-                poke.setDead();
+        }
+
+        //Divide by 16 to get number of chunks between the player furthest to south-west and player furthest to north-east
+        double addToViewDistance = EntitiesUtility.getEuclidianDistance(minPos, maxPos)/16.0;
+        avg_pos = avg_pos.div((double)nearbyPlayers.size());
+
+        //10 is the default server view distance
+        Tuple t = EntitiesUtility.getNumberOfWildPokemonWithinViewDistanceOfPos(avg_pos, 10.0 + addToViewDistance);
+        int wildInAreaAroundPlayers = (int) t.getFirst();
+        int flyingInAreaAroundPlayers = (int)((Tuple)t.getSecond()).getFirst();
+        int waterInAreaAroundPlayers = (int)((Tuple)t.getSecond()).getSecond();
+
+        if(poke.getSpawnLocation() == SpawnLocation.AirPersistent)
+        {
+            if(flyingInAreaAroundPlayers >= maxPerPlayer*nearbyPlayers.size()*maxFlyingPercentage){
+                event.setCanceled(true);
+                return;
             } 
-            else if(wildInAreaAroundPlayers >= maxPerPlayer*nearbyPlayers.size())
-            {
-                poke.setDead();
-            } 
-            else
-            {
-                spawnedPixelmon(poke);
+        } 
+        else if(poke.getSpawnLocation() == SpawnLocation.Water)
+        {
+            if(waterInAreaAroundPlayers >= maxPerPlayer*nearbyPlayers.size()*maxWaterPercentage){
+                event.setCanceled(true);
+                return;
             }
+        }
+
+        if(wildInAreaAroundPlayers >= maxPerArea)
+        {
+            event.setCanceled(true);
+        } 
+        else if(wildInAreaAroundPlayers >= maxPerPlayer*nearbyPlayers.size())
+        {
+            event.setCanceled(true);
+        } 
+        else
+        {
+            spawnedPixelmon(poke);
         }
     }
     
