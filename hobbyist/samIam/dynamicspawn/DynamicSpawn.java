@@ -43,7 +43,7 @@ import org.spongepowered.api.util.Tuple;
 (
         id = "dynamicspawn",
         name = "DynamicSpawn",
-        version = "0.0.4",
+        version = "0.0.6",
         dependencies = @Dependency(id = "pixelmon"),
         description = "Limits the spawn of Pokemon dynamically.",
         authors = "samIam"
@@ -133,8 +133,6 @@ public class DynamicSpawn {
         
         w = Sponge.getServer().getWorlds().toArray(new World[0])[0];
         
-        //Disable spawn chunks loaded
-        w.getProperties().setKeepSpawnLoaded(false);
         scheduleLog = Sponge.getScheduler().createSyncExecutor(this);
         scheduleLog.scheduleAtFixedRate(new LogStatus(), 60, 60, TimeUnit.SECONDS);
         
@@ -155,7 +153,7 @@ public class DynamicSpawn {
             if(!players.isEmpty())
             {
                 Player p = players.get(0);
-                Tuple t = EntitiesUtility.getNumberOfWildPokemonWithinViewDistanceOfPos(p.getTransform().getPosition(), 10.0);
+                Tuple t = EntitiesUtility.getNumberOfWildPokemonWithinViewDistanceOfPos(p.getTransform().getPosition(), 10);
                 int wild = (int) t.getFirst();
                 int flying = (int)((Tuple)t.getSecond()).getFirst();
                 int water = (int)((Tuple)t.getSecond()).getSecond();
@@ -173,7 +171,7 @@ public class DynamicSpawn {
             ArrayList<UUID> tempList = Lists.newArrayList(spawnedPixelmon);
             
             //Divide work by only looking at 25 entities at a time.
-            int iterations = (int)Math.ceil((double)maxOnServer / 25.0);
+            int iterations = (int)Math.max(25.0, Math.ceil((double)maxOnServer / 25.0));
             int p = (iterations-k)*25;
             
             for(int i=p; i < tempList.size(); i++)
@@ -285,11 +283,11 @@ public class DynamicSpawn {
         }
 
         //Divide by 16 to get number of chunks between the player furthest to south-west and player furthest to north-east
-        double addToViewDistance = EntitiesUtility.getEuclidianDistance(minPos, maxPos)/16.0;
+        double addToViewDistance = Math.sqrt(EntitiesUtility.getEuclidianDistanceSqrd(minPos, maxPos))/16.0;
         avg_pos = avg_pos.div((double)nearbyPlayers.size());
 
         //10 is the default server view distance
-        Tuple t = EntitiesUtility.getNumberOfWildPokemonWithinViewDistanceOfPos(avg_pos, 10.0 + addToViewDistance);
+        Tuple t = EntitiesUtility.getNumberOfWildPokemonWithinViewDistanceOfPos(avg_pos, (int)Math.ceil(10.0 + addToViewDistance));
         int wildInAreaAroundPlayers = (int) t.getFirst();
         int flyingInAreaAroundPlayers = (int)((Tuple)t.getSecond()).getFirst();
         int waterInAreaAroundPlayers = (int)((Tuple)t.getSecond()).getSecond();
