@@ -5,7 +5,6 @@ import com.google.common.collect.Lists;
 import com.google.inject.Inject;
 import org.spongepowered.api.event.Listener;
 import org.spongepowered.api.event.game.state.GameStartedServerEvent;
-import org.spongepowered.api.event.game.state.GameStoppedServerEvent;
 import org.spongepowered.api.event.network.ClientConnectionEvent;
 import org.spongepowered.api.plugin.Dependency;
 import org.spongepowered.api.plugin.Plugin;
@@ -29,16 +28,13 @@ import java.util.HashSet;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
-import net.minecraft.nbt.NBTTagCompound;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.entity.EntityJoinWorldEvent;
-import net.minecraftforge.event.entity.living.LivingSpawnEvent;
-import net.minecraftforge.fml.common.eventhandler.Event;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import org.spongepowered.api.config.DefaultConfig;
 import org.spongepowered.api.entity.Entity;
 import org.spongepowered.api.entity.living.player.Player;
-import org.spongepowered.api.event.entity.SpawnEntityEvent;
+import org.spongepowered.api.event.game.state.GameStoppingServerEvent;
 import org.spongepowered.api.scheduler.SpongeExecutorService;
 import org.spongepowered.api.util.Tuple;
 
@@ -47,7 +43,7 @@ import org.spongepowered.api.util.Tuple;
 (
         id = "dynamicspawn",
         name = "DynamicSpawn",
-        version = "0.0.7",
+        version = "0.0.8",
         dependencies = @Dependency(id = "pixelmon"),
         description = "Limits the spawn of Pokemon dynamically.",
         authors = "samIam"
@@ -233,13 +229,13 @@ public class DynamicSpawn {
         {
             return;
         }
-
+        
         EntityPixelmon poke = (EntityPixelmon)e;
         
-        /*if(poke.forceSpawn)
+        if(poke.forceSpawn)
         {
             return;
-        }*/
+        }
         
         if(poke.hasOwner() || poke.hasNPCTrainer)
         {
@@ -333,9 +329,10 @@ public class DynamicSpawn {
     }
     
     @Listener
-    public void onServerStopped(GameStoppedServerEvent event)
+    public void onServerStopped(GameStoppingServerEvent event)
     {
-        
+        scheduleLog.shutdown();
+        scheduleCleanUp.shutdown();
     }
     
     void spawnedPixelmon(EntityPixelmon p){
